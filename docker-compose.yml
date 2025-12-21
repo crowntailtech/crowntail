@@ -1,0 +1,89 @@
+services:
+  db:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: aeromonitor
+    ports:
+      - "5433:5432"  # Different port to avoid conflict
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"  # Different port to avoid conflict
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ../aero-backend-api-split
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8000"  # Different port (8002) to avoid conflict with original (8000)
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/aeromonitor
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      MASTER_ENCRYPTION_KEY: ${MASTER_ENCRYPTION_KEY:-nO5WhsezEv4c2cEAJzycoaEwe17qM2K52Z1pjqnAEE8=}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-60}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../aero-backend-api-split:/app
+      - ../aero-backend-api-split/packages:/app/packages
+      - /app/venv  # Exclude venv from host mount (use container's venv)
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  celery:
+    build:
+      context: ../aero-backend-api-split
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/aeromonitor
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      MASTER_ENCRYPTION_KEY: ${MASTER_ENCRYPTION_KEY:-nO5WhsezEv4c2cEAJzycoaEwe17qM2K52Z1pjqnAEE8=}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../aero-backend-api-split:/app
+      - ../aero-backend-api-split/packages:/app/packages
+    command: celery -A app.tasks.worker worker --loglevel=info
+
+  frontend:
+    build:
+      context: ../aero-frontend-split
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3001:3000"  # Different port (3001) to avoid conflict with original (3000)
+    environment:
+      VITE_API_URL: http://localhost:8002  # Updated to match backend port
+    depends_on:
+      - backend
+    volumes:
+      - ../aero-frontend-split:/app
+      - /app/node_modules
+
+volumes:
+  postgres_data:
+
