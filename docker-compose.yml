@@ -70,12 +70,32 @@ services:
       - ../aero-backend-api-split/packages:/app/packages
     command: celery -A app.tasks.worker worker --loglevel=info
 
+  celery-beat:
+    build:
+      context: ../aero-backend-api-split
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/aeromonitor
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      MASTER_ENCRYPTION_KEY: ${MASTER_ENCRYPTION_KEY:-nO5WhsezEv4c2cEAJzycoaEwe17qM2K52Z1pjqnAEE8=}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../aero-backend-api-split:/app
+      - ../aero-backend-api-split/packages:/app/packages
+    command: celery -A app.tasks.worker beat --loglevel=info
+
   frontend:
     build:
       context: ../aero-frontend-split
       dockerfile: Dockerfile.dev
     ports:
-      - "3001:3000"  # Different port (3001) to avoid conflict with original (3000)
+      - "3002:3000"  # Port 3002 to avoid conflicts
     environment:
       VITE_API_URL: http://localhost:8002  # Updated to match backend port
     depends_on:
